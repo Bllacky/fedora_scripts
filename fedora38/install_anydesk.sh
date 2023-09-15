@@ -5,7 +5,7 @@ sudo "[anydesk]\nname=AnyDesk Fedora - stable\nbaseurl=http://rpm.anydesk.com/fe
 sudo dnf makecache
 #installing dependencies
 sudo dnf install redhat-lsb-core
-sudo dnf --releasever=32 install pangox-compat.x86_64
+sudo dnf --releasever=38 install pangox-compat.x86_64
 sudo dnf install mesa-libGLU
 sudo dnf install gtkglext-libs
 #fixing some library paths hardcoded in Anydesk that don't match with Fedora
