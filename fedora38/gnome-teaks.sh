@@ -6,3 +6,4 @@ sudo dnf install gnome-tweak-tool
 sudo dnf install gnome-shell-extension-dash-to-dock
 
 
+exit
