@@ -1,7 +1,7 @@
-ho#!/usr/bin/env bash
+#!/usr/bin/env bash
 
 #create Anydesk repo in repo folder
-sudo echo "[anydesk]\nname=AnyDesk Fedora - stable\nbaseurl=http://rpm.anydesk.com/fedora/x86_64/\ngpgcheck=0\nrepo_gpgcheck=1\ngpgkey=https://keys.anydesk.com/repos/RPM-GPG-KEY" >> /etc/yum.repos.d/AnyDesk-Fedora.repo
+sudo echo -e "[anydesk]\nname=AnyDesk Fedora - stable\nbaseurl=http://rpm.anydesk.com/fedora/x86_64/\ngpgcheck=0\nrepo_gpgcheck=1\ngpgkey=https://keys.anydesk.com/repos/RPM-GPG-KEY" > /etc/yum.repos.d/AnyDesk-Fedora.repo
 sudo dnf makecache
 #installing dependencies
 sudo dnf install redhat-lsb-core
