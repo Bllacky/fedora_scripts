@@ -18,3 +18,4 @@ sudo dnf -y install anydesk
 #deleting old user any desk folder if it exists
 sudo rm -rf $HOME/.anydesk
 anydesk
+exit
