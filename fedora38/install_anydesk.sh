@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 #create Anydesk repo in repo folder
 sudo "[anydesk]\nname=AnyDesk Fedora - stable\nbaseurl=http://rpm.anydesk.com/fedora/x86_64/\ngpgcheck=0\nrepo_gpgcheck=1\ngpgkey=https://keys.anydesk.com/repos/RPM-GPG-KEY" > /etc/yum.repos.d/AnyDesk-Fedora.repo
 sudo dnf makecache
