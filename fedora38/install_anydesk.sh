@@ -12,7 +12,7 @@ sudo dnf install mesa-libGLU
 sudo dnf install gtkglext-libs
 #fixing some library paths hardcoded in Anydesk that don't match with Fedora
 sudo ln -s /lib64/libgtkglext-x11-1.0.so.0 /lib64/libgtkglext-x11-1_0-0.so.0
-sudo echo "/usr/lib64/gtk-3.0/modules/" > /etc/ld.so.conf.d/pk-gtk.conf
+sudo echo "/usr/lib64/gtk-3.0/modules/" > sudo /etc/ld.so.conf.d/pk-gtk.conf
 sudo ldconfig 
 #finally installing anydesk
 sudo dnf -y install anydesk
