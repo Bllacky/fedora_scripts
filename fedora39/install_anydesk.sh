@@ -21,7 +21,7 @@ sudo ldconfig
 #finally installing anydesk
 sudo yumdownloader anydesk
 sudo rpm -ihv anydesk_*x86_64.rpm --nodeps
-sudo rm nydesk_*x86_64.rpm
+sudo rm anydesk_*x86_64.rpm
 #running anydesk
 #deleting old user any desk folder if it exists
 sudo rm -rf $HOME/.anydesk
