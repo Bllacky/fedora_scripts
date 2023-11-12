@@ -4,4 +4,6 @@
 #The easiest solution is to clean up the local cache of the user
 sudo rm -d -R ~/.local/share/Steam
 sudo vi ~/.local/share/applications/"Steam Linux Runtime - Sniper.desktop"
+sudo vi /usr/share/applications/steam.desktop
+
 
