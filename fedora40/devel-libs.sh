@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #dependencies that are needed to update Python packages
 dnf install gcc-c++
-dnf install httpd-devel python3-devel cmake ninja-build libxml2-devel cairo-devel gobject-introspection-devel cairo-gobject-devel cups-devel libxkbcommon-devel
+dnf install httpd-devel python3-devel cmake ninja-build libxml2-devel cairo-devel gobject-introspection-devel cairo-gobject-devel cups-devel libxkbcommon-devel augeas-devel
 
 exit
