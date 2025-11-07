@@ -1,0 +1,4 @@
+#Install these tools from flatpack and edit 
+
+flatpak install flathub org.bluesabre.MenuLibre
+flatpak run org.bluesabre.MenuLibre
