@@ -1,0 +1,26 @@
+sudo firewall-cmd --permanent --direct --add-rule ipv4 filter INPUT 10 -p tcp -m tcp --dport 3389 -m conntrack --ctstate NEW -j LOG --log-prefix "F2B-RDP " --log-level 6
+sudo firewall-cmd --permanent --direct --add-rule ipv4 filter INPUT 10 -p tcp -m tcp --dport 3390 -m conntrack --ctstate NEW -j LOG --log-prefix "F2B-RDP " --log-level 6
+sudo firewall-cmd --reload
+
+sudo journalctl -k -n 50 --no-pager | grep "F2B-RDP" || true
+
+sudo tee /etc/fail2ban/filter.d/gnome-rdp-fw.conf >/dev/null <<'CONF'
+[Definition]
+failregex = ^.*F2B-RDP .*SRC=<HOST>.*DPT=(3389|3390).*$
+
+ignoreregex =
+CONF
+
+
+sudo tee /etc/fail2ban/jail.d/gnome-rdp-fw.local >/dev/null <<'CONF'
+[gnome-rdp-fw]
+enabled  = true
+backend  = systemd
+filter   = gnome-rdp-fw
+maxretry = 5
+findtime = 10m
+bantime  = 12h
+banaction = firewallcmd-rich-rules
+journalmatch = _TRANSPORT=kernel
+CONF
+
