@@ -1,0 +1,4 @@
+sudo tee /etc/fail2ban/jail.d/00-ignoreip.local >/dev/null <<'CONF'
+[DEFAULT]
+ignoreip = 127.0.0.1/8 ::1 192.168.254.0/24
+CONF
