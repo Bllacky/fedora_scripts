@@ -1,0 +1,108 @@
+cat > ~/f2b_banned_ips.sh <<'BASH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+F2B_BIN="$(command -v fail2ban-client || true)"
+if [[ -z "${F2B_BIN}" ]]; then
+  echo "fail2ban-client not found in PATH." >&2
+  exit 1
+fi
+
+SUDO=()
+if [[ "${EUID}" -ne 0 ]]; then
+  if command -v sudo >/dev/null 2>&1; then
+    SUDO=(sudo)
+  else
+    echo "This script needs root privileges (run as root or install sudo)." >&2
+    exit 1
+  fi
+fi
+
+status_out="$("${SUDO[@]}" "$F2B_BIN" status 2>/dev/null || true)"
+if [[ -z "$status_out" ]]; then
+  echo "fail2ban-server not running or not accessible."
+  exit 1
+fi
+
+jails_csv="$(awk -F': *' '/Jail list:/ {print $2}' <<<"$status_out" | tr -d '\r')"
+if [[ -z "$jails_csv" ]]; then
+  echo "No jails found."
+  exit 0
+fi
+
+# Split "a, b, c" into array
+IFS=',' read -r -a jails <<<"$jails_csv"
+
+ip_regex_ipv4='([0-9]{1,3}\.){3}[0-9]{1,3}'
+ip_regex_ipv6='([0-9A-Fa-f]{0,4}:){2,}[0-9A-Fa-f]{0,4}'
+ip_regex="(${ip_regex_ipv4})|(${ip_regex_ipv6})"
+
+declare -A seen=()
+declare -a all_ips=()
+
+echo "Fail2ban banned IPs by jail:"
+echo
+
+trim() {
+  local s="$1"
+  s="${s#"${s%%[![:space:]]*}"}"
+  s="${s%"${s##*[![:space:]]}"}"
+  printf '%s' "$s"
+}
+
+get_banips() {
+  local jail="$1"
+  local ips=""
+
+  # Try the direct "get <jail> banip" first
+  if ips="$("${SUDO[@]}" "$F2B_BIN" get "$jail" banip 2>/dev/null | tr -d '\r')"; then
+    :
+  else
+    ips=""
+  fi
+
+  # Fallback: parse from "status <jail>"
+  if [[ -z "$ips" ]]; then
+    local jail_status
+    jail_status="$("${SUDO[@]}" "$F2B_BIN" status "$jail" 2>/dev/null | tr -d '\r' || true)"
+    ips="$(awk -F': *' '/Banned IP list:/ {print $2}' <<<"$jail_status" | head -n 1)"
+  fi
+
+  # Normalize to just IP-like tokens
+  if [[ -n "$ips" ]]; then
+    grep -Eo "$ip_regex" <<<"$ips" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//'
+  else
+    echo ""
+  fi
+}
+
+for j in "${jails[@]}"; do
+  jail="$(trim "$j")"
+  [[ -z "$jail" ]] && continue
+
+  ips="$(get_banips "$jail")"
+
+  if [[ -n "$ips" ]]; then
+    echo "[$jail]"
+    echo "  $ips"
+    echo
+
+    for ip in $ips; do
+      if [[ -z "${seen[$ip]+x}" ]]; then
+        seen["$ip"]=1
+        all_ips+=("$ip")
+      fi
+    done
+  fi
+done
+
+if [[ "${#all_ips[@]}" -eq 0 ]]; then
+  echo "No IPs are currently banned."
+  exit 0
+fi
+
+echo "Unique banned IPs:"
+printf '%s\n' "${all_ips[@]}" | sort -u
+BASH
+
+chmod +x ~/f2b_banned_ips.sh
