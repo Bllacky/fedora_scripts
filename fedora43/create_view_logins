@@ -1,99 +1,165 @@
 cat > ~/successful_login_ips.sh <<'BASH'
 #!/usr/bin/env bash
 set -euo pipefail
+export LC_ALL=C
 
 SINCE=""
 UNTIL=""
+BOOT_ONLY=0
+TIMEOUT_SECS=180
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --since)
-      SINCE="$2"; shift 2;;
-    --until)
-      UNTIL="$2"; shift 2;;
+    --since) SINCE="$2"; shift 2;;
+    --until) UNTIL="$2"; shift 2;;
+    --boot) BOOT_ONLY=1; shift 1;;
+    --timeout) TIMEOUT_SECS="$2"; shift 2;;
     -h|--help)
       cat <<'HELP'
 Usage:
-  successful_login_ips.sh [--since "YYYY-MM-DD HH:MM:SS"] [--until "YYYY-MM-DD HH:MM:SS"]
+  successful_login_ips_v5.sh [--since "30 days ago"|"YYYY-MM-DD HH:MM:SS"] [--until "..."] [--boot] [--timeout SECS]
 
-Examples:
-  successful_login_ips.sh
-  successful_login_ips.sh --since "2026-01-01 00:00:00"
-  successful_login_ips.sh --since "2026-02-01 00:00:00" --until "2026-02-06 23:59:59"
+Default: --since "30 days ago" (unless --boot).
 HELP
       exit 0;;
-    *)
-      echo "Unknown argument: $1" >&2
-      exit 2;;
+    *) echo "Unknown arg: $1" >&2; exit 2;;
   esac
 done
+
+if [[ -z "$SINCE" && $BOOT_ONLY -eq 0 ]]; then
+  SINCE="30 days ago"
+fi
 
 JOPTS=(--no-pager -o cat)
 [[ -n "$SINCE" ]] && JOPTS+=(--since "$SINCE")
 [[ -n "$UNTIL" ]] && JOPTS+=(--until "$UNTIL")
+[[ $BOOT_ONLY -eq 1 ]] && JOPTS+=(--boot)
 
-extract_ipv4v6() {
-  grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}|([0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}' || true
+run_sudo_journalctl() { timeout "${TIMEOUT_SECS}s" sudo journalctl "${JOPTS[@]}" "$@" 2>/dev/null || true; }
+run_user_journalctl() { timeout "${TIMEOUT_SECS}s" journalctl --user "${JOPTS[@]}" "$@" 2>/dev/null || true; }
+
+normalize_ip() {
+  sed -E \
+    -e 's/^\[([0-9A-Fa-f:]+)\]$/\1/' \
+    -e 's/^::ffff:([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)$/\1/I' \
+    -e 's/^"//; s/"$//; s/;$//'
+}
+
+extract_ip_after_keywords() {
+  # Extract IPs only when they appear as "from X", "addr=X", "peer=X", "client X", "rhost=X", etc.
+  sed -nE '
+    s/.*\bfrom[ =:]*\[?([0-9A-Fa-f:.]+)\]?.*/\1/p
+    s/.*\baddr=([0-9A-Fa-f:.]+).*/\1/p
+    s/.*\brhost=([0-9A-Fa-f:.]+).*/\1/p
+    s/.*\bpeer[ =:]*\[?([0-9A-Fa-f:.]+)\]?.*/\1/p
+    s/.*\bclient[ =:]*\[?([0-9A-Fa-f:.]+)\]?.*/\1/p
+    s/.*\bremote[ =:]*\[?([0-9A-Fa-f:.]+)\]?.*/\1/p
+    s/.*\bip[ =:]*\[?([0-9A-Fa-f:.]+)\]?.*/\1/p
+  ' \
+  | normalize_ip \
+  | grep -vE '^\?$|^\(null\)$|^unknown$|^-$|^::$|^::1$|^127\.|^0\.0\.0\.0$' \
+  | sort -u
+}
+
+extract_peer_ips_from_ss() {
+  awk '$1 ~ /^ESTAB/ {print $5}' \
+  | sed -E 's/^\[?([0-9A-Fa-f:.]+)\]?:[0-9]+$/\1/' \
+  | normalize_ip \
+  | sort -u
 }
 
 sshd_success_ips() {
-  sudo journalctl -u sshd "${JOPTS[@]}" 2>/dev/null \
+  # Only Accepted auth lines -> IP after "from"
+  run_sudo_journalctl -u sshd --grep 'Accepted (password|publickey|keyboard-interactive|gssapi-with-mic)' \
   | awk '
-      /Accepted (password|publickey|keyboard-interactive|gssapi-with-mic)/ {
-        for (i=1;i<=NF;i++) if ($i=="from") { print $(i+1); break }
-      }
-    ' \
+      /Accepted (password|publickey|keyboard-interactive|gssapi-with-mic)/{
+        for(i=1;i<=NF;i++) if($i=="from"){print $(i+1); break}
+      }' \
+  | normalize_ip \
   | sort -u
 }
 
-grd_success_ips() {
-  {
-    sudo journalctl -u gnome-remote-desktop.service "${JOPTS[@]}" 2>/dev/null || true
-    journalctl --user -u gnome-remote-desktop.service "${JOPTS[@]}" 2>/dev/null || true
-    sudo journalctl "${JOPTS[@]}" -t gnome-remote-desktop 2>/dev/null || true
-    sudo journalctl "${JOPTS[@]}" -t grd 2>/dev/null || true
-  } \
-  | grep -Ei '(rdp|gnome-remote-desktop|grd)' \
-  | grep -Ei '(connect|connected|authentication|authenticated|login|logged in|session|accepted|authorized|success)' \
-  | extract_ipv4v6 \
+ssh_active_ips_4422() {
+  sudo ss -Htan state established '( sport = :4422 or dport = :4422 )' 2>/dev/null \
+  | awk '$1 ~ /^ESTAB/ {print $5}' \
+  | sed -E 's/^\[?([0-9A-Fa-f:.]+)\]?:[0-9]+$/\1/' \
+  | normalize_ip \
   | sort -u
+}
+
+rdp_active_ips_3389_3390() {
+  sudo ss -Htanp '( sport = :3389 or dport = :3389 or sport = :3390 or dport = :3390 )' 2>/dev/null \
+  | extract_peer_ips_from_ss
+}
+
+rdp_journal_success_ips_grd() {
+  # IMPORTANT: Only keep *successful* GNOME Remote Desktop auth/session events
+  {
+    run_sudo_journalctl -u gnome-remote-desktop.service --grep 'RDP|rdp|VNC|vnc|auth|login|session|authenticated|authorized|accepted|success|succeed' || true
+    run_sudo_journalctl _COMM=gnome-remote-desktop             --grep 'RDP|rdp|VNC|vnc|auth|login|session|authenticated|authorized|accepted|success|succeed' || true
+    run_sudo_journalctl SYSLOG_IDENTIFIER=gnome-remote-desktop --grep 'RDP|rdp|VNC|vnc|auth|login|session|authenticated|authorized|accepted|success|succeed' || true
+    run_sudo_journalctl SYSLOG_IDENTIFIER=grd                  --grep 'RDP|rdp|VNC|vnc|auth|login|session|authenticated|authorized|accepted|success|succeed' || true
+    run_user_journalctl -u gnome-remote-desktop.service --grep 'RDP|rdp|VNC|vnc|auth|login|session|authenticated|authorized|accepted|success|succeed' || true
+  } \
+  | grep -Ei 'success|succeed|authenticated|authorized|accepted|session started|login succeeded|authentication succeeded|user .*logged in' \
+  | grep -Eiv 'fail|failed|failure|denied|invalid|reject|error|unauthori|disconnect|closed|timeout|wrong|refus' \
+  | extract_ip_after_keywords
+}
+
+rdp_audit_success_ips() {
+  # IMPORTANT: Restrict to audit records generated by gnome-remote-desktop / grd only (avoid sshd/pam noise)
+  run_sudo_journalctl _TRANSPORT=audit --grep 'res=success|res=1' \
+  | grep -E 'comm="(gnome-remote-desktop|gnome-remote-desktop-daemon|grd|grd-session|grd-rdp|grd-vnc)"|exe="[^"]*(gnome-remote-desktop|grd)[^"]*"' \
+  | sed -nE 's/.*\baddr=([^ ]+).*/\1/p' \
+  | normalize_ip \
+  | grep -vE '^\?$|^\(null\)$|^unknown$|^::$|^::1$|^127\.|^0\.0\.0\.0$' \
+  | sort -u
+}
+
+rdp_daemon_listen_info() {
+  sudo ss -Hlnpt '( sport = :3389 or sport = :3390 )' 2>/dev/null || true
 }
 
 SSH_IPS="$(sshd_success_ips || true)"
-RDP_IPS="$(grd_success_ips || true)"
-ALL_IPS="$(printf "%s\n%s\n" "$SSH_IPS" "$RDP_IPS" | sed '/^$/d' | sort -u)"
+SSH_ACTIVE="$(ssh_active_ips_4422 || true)"
 
-echo "=== SSH successful logins (sshd) ==="
-if [[ -n "${SSH_IPS//[[:space:]]/}" ]]; then
-  echo "$SSH_IPS"
-  echo "Count: $(echo "$SSH_IPS" | sed '/^$/d' | wc -l | tr -d ' ')"
+RDP_ACTIVE="$(rdp_active_ips_3389_3390 || true)"
+RDP_JOURNAL="$(rdp_journal_success_ips_grd || true)"
+RDP_AUDIT="$(rdp_audit_success_ips || true)"
+
+RDP_IPS="$(printf "%s\n%s\n%s\n" "$RDP_JOURNAL" "$RDP_AUDIT" "$RDP_ACTIVE" | sed '/^$/d' | sort -u)"
+ALL_IPS="$(printf "%s\n%s\n%s\n" "$SSH_IPS" "$SSH_ACTIVE" "$RDP_IPS" | sed '/^$/d' | sort -u)"
+
+echo "=== RDP listeners (what owns 3389/3390) ==="
+rdp_daemon_listen_info
+echo
+
+echo "=== SSH successful logins (sshd journal) ==="
+if [[ -n "${SSH_IPS//[[:space:]]/}" ]]; then echo "$SSH_IPS"; else echo "(none found)"; fi
+echo
+
+echo "=== SSH currently connected clients (port 4422) ==="
+if [[ -n "${SSH_ACTIVE//[[:space:]]/}" ]]; then echo "$SSH_ACTIVE"; else echo "(none)"; fi
+echo
+
+echo "=== GNOME RDP/VNC successful IPs from journal (filtered) ==="
+if [[ -n "${RDP_JOURNAL//[[:space:]]/}" ]]; then echo "$RDP_JOURNAL"; else echo "(none found)"; fi
+echo
+
+echo "=== GNOME RDP/VNC successful IPs from audit (restricted to gnome-remote-desktop/grd) ==="
+if [[ -n "${RDP_AUDIT//[[:space:]]/}" ]]; then echo "$RDP_AUDIT"; else echo "(none found)"; fi
+echo
+
+echo "=== GNOME RDP currently connected clients (TCP ESTAB on 3389/3390) ==="
+if [[ -n "${RDP_ACTIVE//[[:space:]]/}" ]]; then
+  echo "$RDP_ACTIVE"
 else
-  echo "(none found)"
-  echo "Count: 0"
+  echo "(none — only LISTEN, no ESTAB TCP sessions on 3389/3390)"
 fi
 echo
 
-echo "=== GNOME Remote Desktop successful sessions (RDP / gnome-remote-desktop) ==="
-if [[ -n "${RDP_IPS//[[:space:]]/}" ]]; then
-  echo "$RDP_IPS"
-  echo "Count: $(echo "$RDP_IPS" | sed '/^$/d' | wc -l | tr -d ' ')"
-else
-  echo "(none found)"
-  echo "Count: 0"
-fi
-echo
-
-echo "=== Combined unique IPs ==="
-if [[ -n "${ALL_IPS//[[:space:]]/}" ]]; then
-  echo "$ALL_IPS"
-  echo "Count: $(echo "$ALL_IPS" | sed '/^$/d' | wc -l | tr -d ' ')"
-else
-  echo "(none found)"
-  echo "Count: 0"
-fi
-
-echo
-echo "Note: OpenSSH 'Accepted ...' log lines usually do NOT include the server port (4422 vs 22)."
-echo "      If your sshd only listens on 4422, the SSH list matches your request."
+echo "=== Combined unique IPs (ssh + rdp/vnc) ==="
+if [[ -n "${ALL_IPS//[[:space:]]/}" ]]; then echo "$ALL_IPS"; else echo "(none)"; fi
 BASH
 
 chmod +x ~/successful_login_ips.sh
